@@ -5,10 +5,17 @@ from LLM_oracle import ArenaMP
 from get_env_info import Get_env_info
 import traceback
 import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from utils.logger import UnifiedLogger
+from utils.experiment_config import resolve_log_paths
 
 args = get_args()
+TEXT_LOG_PATH, JSON_LOG_ROOT = resolve_log_paths(args, "PEFA")
 
-def write_log_to_file(log_message, file_name=f'./log/{args.env}.txt'):
+def write_log_to_file(log_message, file_name=TEXT_LOG_PATH):
         with open(file_name, 'a') as file:  
             file.write(log_message + '\n')  
 
@@ -39,6 +46,16 @@ if __name__ == '__main__':
         task_goal = data[task_id]["task_goal"]
         goal_instruction = data[task_id]["goal_instruction"]
         ground_truth_step_num = data[task_id]["ground_truth_step_num"]
+        gt_steps = ground_truth_step_num[0] if isinstance(ground_truth_step_num, list) else ground_truth_step_num
+
+        json_logger = UnifiedLogger(
+            task_id=task_id,
+            env_id=env_id,
+            task_name=task_name,
+            method_name="PEFA",
+            log_dir=JSON_LOG_ROOT,
+            ground_truth_steps=gt_steps,
+        )
 
         test_results = {}
         agent = []
@@ -58,6 +75,7 @@ if __name__ == '__main__':
                 'args': args,
                 'agent_node': agent_nodes[i],
                 'init_graph': graph,
+                'logger': json_logger,
             }
             dict_list.append(dict_item)
 
@@ -82,13 +100,15 @@ if __name__ == '__main__':
         agents = [LLM_agent_fn(dict_list[i]) for i in range(len(dict_list))]
         # print(len(agents))
         # input('s')
-        arena = ArenaMP(env_fn, agents, args)
+        arena = ArenaMP(env_fn, agents, args, logger=json_logger)
 
         steps = 0
         # import ipdb ;ipdb.set_trace()
 
         try:
             success, steps, saved_info = arena.run()
+            json_path = json_logger.finalize(success, steps)
+            print(f"JSON log saved to {json_path}")
         except Exception as e:
 
             print(f"An error occurred: {e}")
@@ -96,6 +116,7 @@ if __name__ == '__main__':
             error_info = traceback.format_exc()
             write_log_to_file(f"An error occurred: {e}")
             write_log_to_file(error_info+'\n\n')
+            json_logger.finalize(False, steps)
             success = False
             raise Exception
             # input('STOP')
@@ -110,9 +131,9 @@ if __name__ == '__main__':
         else:
             failed_tasks.append(task_id)
 
-    write_log_to_file('average steps:', sum(steps_list)/len(steps_list) if len(steps_list) > 0 else None)
-    write_log_to_file('successful tasks:', success_tasks if len(success_tasks) > 0 else None)
-    write_log_to_file('failed tasks:', failed_tasks if len(failed_tasks) > 0 else None)
+    write_log_to_file(f"average steps: {sum(steps_list)/len(steps_list) if len(steps_list) > 0 else None}")
+    write_log_to_file(f"successful tasks: {success_tasks if len(success_tasks) > 0 else None}")
+    write_log_to_file(f"failed tasks: {failed_tasks if len(failed_tasks) > 0 else None}")
     print('average steps:', sum(steps_list)/len(steps_list) if len(steps_list) > 0 else None)
     print('successful tasks:', success_tasks if len(success_tasks) > 0 else None )
     print('failed tasks:', failed_tasks if len(failed_tasks) > 0 else None)    

@@ -239,7 +239,7 @@ def parse_args():
     parser.add_argument('--load_path', default=None, type=str)
     parser.add_argument('--batch_size', default=128, type=int)
     parser.add_argument('--evaluate', default=True)
-    parser.add_argument('--model', default="gpt-4o-mini", type=str)
+    parser.add_argument('--model', default="gpt-4o-2024-11-20", type=str)
     parser.add_argument('--use_llm', default=True, type=bool)
     parser.add_argument('--env', type=str, required=True, choices=['env0', 'env1', 'env2', 'env3', 'env4'],
                     help='Select a simulation environment')
@@ -249,6 +249,8 @@ def parse_args():
                     help='please enter your openai api_key')
     parser.add_argument('--organization', default='', 
                     help='please enter your openai organization')
+    parser.add_argument('--base_url', default='',
+                    help='please enter your openai base_url')
 
     return parser.parse_args()
 

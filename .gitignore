@@ -25,3 +25,22 @@ docs/apidoc
 
 # vscode
 .vscode/
+reference/
+
+# Generated experiment artifacts
+src/exp_sys/logs/json/
+src/exp_sys/logs/text/
+src/exp_sys/logs/llm_json/
+src/exp_sys/logs
+src/exp_sys/reports/
+src/exp_sys/docs/
+src/exp_sys/__pycache__/
+
+
+# Legacy experiment artifacts
+src/experiment/logs/
+src/experiment/**/log/
+
+# Vibe Coding
+CLAUDE.md
+docs/

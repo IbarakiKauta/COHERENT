@@ -1,0 +1,26 @@
+## Your current observation
+#OBSERVATION#
+
+## Available actions (your entire action space this turn)
+#ACTIONLIST#
+
+## Oracle's subgoal for you
+#INSTRUCTION#
+
+## How to respond
+
+Reason first, then commit to exactly ONE of two outputs. Never both.
+
+If you CAN make progress this turn with an action from the list above:
+  Thought: <one or two sentences. Check that the subgoal is physically achievable by you right now. Say what the single next atomic step should be.>
+  Action: <one action string copied VERBATIM from the Available actions list>
+
+If you CANNOT make progress (the subgoal is impossible for you, or none of the listed actions advances it):
+  Thought: <one or two sentences explaining why.>
+  CANNOT: <one short sentence stating the specific obstacle — e.g. "microwave(15) is on a HIGH surface I cannot reach", "door(8) to kitchen is closed and I am not holding anything to open it with right now", "wrong agent — this needs the robot_arm on that table".>
+
+Hard rules:
+- The Action line, if present, must match one of the listed actions character-for-character.
+- Do NOT output both an Action and a CANNOT. Pick one.
+- Do NOT invent actions that are not in the list above. If the action you want is missing, that is itself grounds for CANNOT.
+- No preamble, no bullet list, no markdown. Exactly `Thought:` then `Action:` OR `Thought:` then `CANNOT:`.

@@ -1,6 +1,7 @@
 import random
 import copy
 import json
+import os
 import openai
 from openai import OpenAIError,OpenAI
 import backoff
@@ -8,7 +9,7 @@ import re
 
 # @ray.remote
 class ArenaMP(object):
-    def __init__(self, environment_fn, agent_fn, args , run_predefined_actions=False):
+    def __init__(self, environment_fn, agent_fn, args , run_predefined_actions=False, logger=None):
         # run_predefined_actions is a parameter that you can use predefined_actions.json to strictly set the agents' actions instead of using algorithm to calculate the action.
         
         self.env_fn = environment_fn
@@ -18,6 +19,7 @@ class ArenaMP(object):
         self.task_goal = None
         self.record_dir = f'./log/{args.env}_round_{args.rounds}.txt'
         self.debug = args.debug
+        self.logger = logger
         print("Init Env")
         self.env = environment_fn()
         self.run_predefined_actions = run_predefined_actions
@@ -44,10 +46,20 @@ class ArenaMP(object):
         self.last_unsatisfied = None
         self.costdict = {}
         if self.source == 'openai':
-            api_key = args.api_key # your openai api key
-            organization=args.organization # your openai organization
+            api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+            organization = args.organization or os.getenv("OPENAI_ORGANIZATION")
+            base_url = getattr(args, 'base_url', '') or os.getenv("OPENAI_BASE_URL")
 
-            client = OpenAI(api_key = api_key, organization=organization)
+            if not api_key:
+                raise ValueError("Missing OpenAI API key. Set --api_key or OPENAI_API_KEY.")
+
+            client_kwargs = {"api_key": api_key}
+            if organization:
+                client_kwargs["organization"] = organization
+            if base_url:
+                client_kwargs["base_url"] = base_url.rstrip('/')
+
+            client = OpenAI(**client_kwargs)
             if self.chat:
                 self.sampling_params = {
                     "max_tokens": args.max_tokens,
@@ -176,6 +188,15 @@ class ArenaMP(object):
             pass
 
         obs = self.env.get_observations()
+        if self.logger:
+            self.logger.start_step(self.env.steps, {
+                "task_id": self.env.task_id,
+                "env_id": self.env.env_id,
+                "task_name": self.env.task_name,
+                "goal_instruction": self.env.goal_instruction,
+                "dialogue_history": self.dialogue_history,
+                "rounds": self.args.rounds,
+            })
         id_name_dict = self.env.id_name_dict
 
         obs2text = ''
@@ -286,6 +307,14 @@ class ArenaMP(object):
                 self.last_task_results = task_results
                 self.last_satisfied = satisfied
                 self.last_unsatisfied = unsatisfied
+                if self.logger:
+                    after_obs = self.env.get_observations()
+                    self.logger.log_environment_change(
+                        before_state={"step": self.env.steps, "obs2text": self.agent_obs2text(obs, id)},
+                        after_state={"step": self.env.steps, "obs2text": self.agent_obs2text(after_obs, id)},
+                        action_executed=agent_action,
+                        action_success=done,
+                    )
             except Exception as e:
                 print("Exception occurs when performing action: ", agent_action)
                 raise Exception
@@ -322,6 +351,21 @@ class ArenaMP(object):
             done, task_results, satisfied, unsatisfied, id, agent_action, agent_message  = self.step()
 
             success = done
+
+            # Optional low-cost trace stop for quick validation.
+            if self.args.max_steps is not None and self.env.steps >= self.args.max_steps:
+                print("---------------------------")
+                print(f"Early stop triggered by --max_steps={self.args.max_steps}")
+                print(f" steps: {self.env.steps}")
+                print("---------------------------")
+                self.write_log_to_file(
+                    f"""---------------------------
+                                       Early stop triggered by --max_steps={self.args.max_steps}
+                                       steps: {self.env.steps}
+                                       ---------------------------
+                                       """
+                )
+                break
 
             agent_id = id
 

@@ -1,0 +1,24 @@
+## Your current observation
+#OBSERVATION#
+
+## Available actions (your entire action space this turn)
+#ACTIONLIST#
+
+## Oracle's subgoal for you
+#INSTRUCTION#
+
+## How to respond
+
+Reason internally, then output EXACTLY one of these two forms (no preamble, no markdown):
+
+If you CAN make progress this turn:
+  Action: <one action string copied VERBATIM from the Available actions list>
+
+If you CANNOT make progress (subgoal is impossible for you, or none of the listed actions advances it):
+  CANNOT: <one short sentence stating the specific obstacle — e.g. "microwave(15) is on a HIGH surface I cannot reach", "wrong agent — this needs the robot_arm on that table">
+
+Hard rules:
+- The Action, if present, must match one of the listed actions character-for-character.
+- Do NOT output both Action and CANNOT. Pick one.
+- Do NOT invent actions not in the list; missing expected action is itself grounds for CANNOT.
+- No explanatory text before or after the single `Action:` or `CANNOT:` line.

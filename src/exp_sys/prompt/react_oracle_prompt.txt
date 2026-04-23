@@ -1,0 +1,31 @@
+## Task goal
+#TASK_GOAL#
+
+## Current robot states
+#ROBOT_STATES#
+
+## Environment structure (key objects, where they are, and reachability)
+#ENV_STRUCTURE#
+
+## Dialogue history
+#DIALOGUE_HISTORY#
+
+## Your task
+Decide which SINGLE robot should act next and give it ONE coarse-grained subgoal it can work on for several steps. Use the environment structure above to choose an agent that can physically reach the relevant objects (check room, surface, and HIGH/LOW height).
+
+Output format (exactly one line, no alternatives, no multiple sub-instructions):
+  Hello <class_name>(id): <coarse subgoal>.
+
+Good examples:
+  Hello <robot_dog>(23): go to the kitchen and bring back the <apple>(7) to the livingroom.
+  Hello <robot_arm>(24): open the <microwave>(15) and place the <bread>(26) into the <plate>(51).
+  Hello <quadrotor>(22): fly to the <dining table>(13) and land there to receive the <bread>(26).
+
+Rules:
+- Use lowercase class names inside <>, with the numeric id in parentheses.
+- Send to ONE robot per turn.
+- The subgoal must be physically achievable by that specific robot (respect HIGH/LOW, room location, basket-only-transport, etc.). Re-check the Environment structure above before committing.
+- If the dialogue history shows the robot just refused ("CANNOT: ...") or an action failed in the env, DO NOT repeat the same subgoal to the same agent — either pick a different agent or change the subgoal.
+- If all task sub-goals look satisfied per the state+history, still issue the most useful next subgoal (do not output "task done"); the main loop owns termination.
+
+Think briefly about the choice, then output exactly one `Hello <class_name>(id): ...` line.

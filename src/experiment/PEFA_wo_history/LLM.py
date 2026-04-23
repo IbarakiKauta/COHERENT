@@ -1,13 +1,14 @@
 
 import copy
 import openai
+import os
 import json
 from openai import OpenAIError, OpenAI
 import backoff
 
 
 class LLM:
-	def __init__(self, source, lm_id, args):
+	def __init__(self, source, lm_id, args, logger=None):
 		
 		self.args = args
 		self.debug = args.debug
@@ -17,13 +18,24 @@ class LLM:
 		self.total_cost = 0
 		self.device = None
 		self.record_dir = f'./log/{args.env}.txt'
+		self.logger = logger
 
 		if self.source == 'openai':
 
-			api_key = args.api_key  # your openai api key
-			organization= args.organization # your openai organization
+			api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+			organization = args.organization or os.getenv("OPENAI_ORGANIZATION")
+			base_url = getattr(args, 'base_url', '') or os.getenv("OPENAI_BASE_URL")
 
-			client = OpenAI(api_key = api_key, organization=organization)
+			if not api_key:
+				raise ValueError("Missing OpenAI API key. Set --api_key or OPENAI_API_KEY.")
+
+			client_kwargs = {"api_key": api_key}
+			if organization:
+				client_kwargs["organization"] = organization
+			if base_url:
+				client_kwargs["base_url"] = base_url.rstrip('/')
+
+			client = OpenAI(**client_kwargs)
 			if self.chat:
 				self.sampling_params = {
 					"max_tokens": args.max_tokens,
@@ -53,6 +65,10 @@ class LLM:
 								usage = response.usage.prompt_tokens * 0.01 / 1000 + response.usage.completion_tokens * 0.03 / 1000
 							elif 'gpt-3.5-turbo-1106' in self.lm_id:
 								usage = response.usage.prompt_tokens * 0.0015 / 1000 + response.usage.completion_tokens * 0.002 / 1000
+							elif 'gpt-4o-2024-11-20' in self.lm_id:
+								usage = response.usage.prompt_tokens * 0.005 / 1000 + response.usage.completion_tokens * 0.015 / 1000
+							else:
+								usage = 0
 						# mean_log_probs = [np.mean(response['choices'][i]['logprobs']['token_logprobs']) for i in
 						# 				  range(sampling_params['n'])]
 						else:
@@ -62,7 +78,12 @@ class LLM:
 						raise e
 				else:
 					raise ValueError("invalid source")
-				return generated_samples, usage
+				# Return token counts for JSON logging
+				if 'response' in locals() and hasattr(response, 'usage'):
+					prompt_tokens = response.usage.prompt_tokens
+					completion_tokens = response.usage.completion_tokens
+					return generated_samples, usage, prompt_tokens, completion_tokens
+				return generated_samples, usage, 0, 0
 
 			return _generate
 
@@ -211,8 +232,13 @@ class LLM:
 		if self.debug:
 			print(f"cot_prompt:\n{agent_prompt}")
 		chat_prompt = [{"role": "user", "content": agent_prompt}]
-		outputs, usage = self.generator(chat_prompt, self.sampling_params)
+		result = self.generator(chat_prompt, self.sampling_params)
+		if len(result) == 4:
+			outputs, usage, prompt_tokens, completion_tokens = result
+		else:
+			outputs, usage = result[:2]
 		output = outputs[0]
+		message = output
 
 		self.write_log_to_file(output+'\n111111111')
 		self.total_cost += usage
@@ -223,19 +249,29 @@ class LLM:
 			print(f"total cost: {self.total_cost}")
 		sentences = output.split(".")
 		first_sentence = sentences[0].upper()
+		if self.logger:
+			execution_result = "success" if "YES I CAN" in first_sentence else "failure" if "SORRY I CANNOT" in first_sentence else "unexpected_format"
+			self.logger.log_llm_call(agent=f"{agent_node['class_name']}({agent_node['id']})", call_type="oracle_reasoning", prompt=agent_prompt, response=output, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, cost=usage, execution_result=execution_result)
 
-		if first_sentence == "YES I CAN":
+		if "YES I CAN" in first_sentence:
 			chat_prompt = [{"role": "user", "content": agent_prompt},
 							{"role": "assistant", "content": output},
 							{"role": "user", "content": "Answer with only one best next action in the list of available actions. So the answer is"}]
 
-			outputs, usage = self.generator(chat_prompt, self.sampling_params)
+			result = self.generator(chat_prompt, self.sampling_params)
+			if len(result) == 4:
+				outputs, usage, prompt_tokens, completion_tokens = result
+			else:
+				outputs, usage = result[:2]
 			output = outputs[0]
 			self.total_cost += usage
 			self.write_log_to_file(output+'\n2222222222222')
 			sentences = output.split(".")
 			first_sentence = sentences[0].upper()
-			if first_sentence != "SORRY I CANNOT": 
+			if self.logger:
+				execution_result = "failure" if "SORRY I CANNOT" in first_sentence else "success"
+				self.logger.log_llm_call(agent=f"{agent_node['class_name']}({agent_node['id']})", call_type="action_selection", prompt=json.dumps(chat_prompt, ensure_ascii=False), response=output, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, cost=usage, execution_result=execution_result)
+			if "SORRY I CANNOT" not in first_sentence: 
 
 				if self.debug:
 					print(f"cot_output:\n{output}")
@@ -264,18 +300,28 @@ class LLM:
 				prompt = prompt.replace('#PLAN#', plan_str)
 				prompt = prompt.replace('#AGENT#', f"<{agent_node['class_name']}>")
 				prompt = [{"role": "user", "content": prompt}]
-				outputs, usage = self.generator(prompt, self.sampling_params)
+				result = self.generator(prompt, self.sampling_params)
+				if len(result) == 4:
+					outputs, usage, prompt_tokens, completion_tokens = result
+				else:
+					outputs, usage = result[:2]
 				output = outputs[0]
 				self.total_cost += usage
 				message += output
 				self.write_log_to_file(output+'\n333333333333333333')
+				if self.logger:
+					self.logger.log_llm_call(agent=f"{agent_node['class_name']}({agent_node['id']})", call_type="judge_verify", prompt=json.dumps(prompt, ensure_ascii=False), response=output, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, cost=usage, execution_result="success", parsed_action=plan_str)
 				info.update({"outputs": message})
 
 
-		if first_sentence == "SORRY I CANNOT":
-			output = output[16].lower() + output[17:]
-			message = f"Sorry, the current actions I can perform cannot complete this instrcution. Possible reasons would be {output} My current actionlist is: {available_plans}"
+		if "SORRY I CANNOT" in first_sentence:
+			reason_text = output[output.find("SORRY I CANNOT") + len("SORRY I CANNOT"):].strip()
+			if reason_text:
+				reason_text = reason_text[0].lower() + reason_text[1:] if reason_text else ""
+			message = f"Sorry, the current actions I can perform cannot complete this instrcution. Possible reasons would be {reason_text} My current actionlist is: {available_plans}"
 			self.write_log_to_file(message+'\n4444444444444')
+		elif "YES I CAN" not in first_sentence:
+			message = f"The response format from the model was unexpected: {output}. My current actionlist is: {available_plans}"
 		info['cost'] = self.total_cost	
 		self.write_log_to_file(f"total cost: {self.total_cost}")
 		info.update({"outputs": message})

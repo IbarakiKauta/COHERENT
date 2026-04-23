@@ -1,12 +1,13 @@
 import copy
 import json
+import os
 from openai import OpenAIError, OpenAI
 import openai
 import backoff  
 
 
 class LLM:
-	def __init__(self, source, lm_id, args):
+	def __init__(self, source, lm_id, args, logger=None):
 		self.args = args
 		self.debug = args.debug
 		self.source = args.source
@@ -15,13 +16,24 @@ class LLM:
 		self.total_cost = 0
 		self.device = None
 		self.record_dir = f'./log/{args.env}.txt'
+		self.logger = logger
 
 		if self.source == 'openai':
 
-			api_key = args.api_key  # your openai api key
-			organization= args.organization # your openai organization
+			api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+			organization = args.organization or os.getenv("OPENAI_ORGANIZATION")
+			base_url = getattr(args, 'base_url', '') or os.getenv("OPENAI_BASE_URL")
 
-			client = OpenAI(api_key = api_key, organization=organization)
+			if not api_key:
+				raise ValueError("Missing OpenAI API key. Set --api_key or OPENAI_API_KEY.")
+
+			client_kwargs = {"api_key": api_key}
+			if organization:
+				client_kwargs["organization"] = organization
+			if base_url:
+				client_kwargs["base_url"] = base_url.rstrip('/')
+
+			client = OpenAI(**client_kwargs)
 			if self.chat:
 				self.sampling_params = {
 					"max_tokens": args.max_tokens,
@@ -51,6 +63,10 @@ class LLM:
 								usage = response.usage.prompt_tokens * 0.01 / 1000 + response.usage.completion_tokens * 0.03 / 1000
 							elif 'gpt-3.5-turbo-1106' in self.lm_id:
 								usage = response.usage.prompt_tokens * 0.0015 / 1000 + response.usage.completion_tokens * 0.002 / 1000
+							elif 'gpt-4o-2024-11-20' in self.lm_id:
+								usage = response.usage.prompt_tokens * 0.005 / 1000 + response.usage.completion_tokens * 0.015 / 1000
+							else:
+								usage = 0
 						else:
 							raise ValueError(f"{lm_id} not available!")
 					except OpenAIError as e:
@@ -58,7 +74,12 @@ class LLM:
 						raise e
 				else:
 					raise ValueError("invalid source")
-				return generated_samples, usage
+				# Return token counts for JSON logging
+				if 'response' in locals() and hasattr(response, 'usage'):
+					prompt_tokens = response.usage.prompt_tokens
+					completion_tokens = response.usage.completion_tokens
+					return generated_samples, usage, prompt_tokens, completion_tokens
+				return generated_samples, usage, 0, 0
 
 			return _generate
 

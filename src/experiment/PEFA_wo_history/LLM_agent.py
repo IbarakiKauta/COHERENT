@@ -7,7 +7,7 @@ class LLM_agent:
 	"""
 	LLM agent class
 	"""
-	def __init__(self, agent_id, args, agent_node, init_graph):
+	def __init__(self, agent_id, args, agent_node, init_graph, logger=None):
 
 		self.agent_node = agent_node
 		self.agent_id = agent_id
@@ -16,7 +16,8 @@ class LLM_agent:
 		self.source = args.source
 		self.lm_id = args.lm_id
 		self.args = args
-		self.LLM = LLM(self.source, self.lm_id, self.args)
+		self.logger = logger
+		self.LLM = LLM(self.source, self.lm_id, self.args, logger=self.logger)
 		self.unsatisfied = {}
 		self.steps = 0
 		self.plan = None

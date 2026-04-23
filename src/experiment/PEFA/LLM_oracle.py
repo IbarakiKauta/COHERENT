@@ -4,13 +4,14 @@ import numpy as np
 from tqdm import tqdm
 import time
 import json
+import os
 from openai import OpenAIError,OpenAI
 import backoff
 import traceback
 
 # @ray.remote
 class ArenaMP(object):
-    def __init__(self, environment_fn, agent_fn, args , run_predefined_actions=False):
+    def __init__(self, environment_fn, agent_fn, args , run_predefined_actions=False, logger=None):
         # run_predefined_actions is a parameter that you can use predefined_actions.json to strictly set the agents' actions instead of using algorithm to calculate the action.
         
         self.env_fn = environment_fn
@@ -20,6 +21,7 @@ class ArenaMP(object):
         self.task_goal = None
         self.record_dir = f'./log/{args.env}.txt'
         self.debug = args.debug
+        self.logger = logger
         print("Init Env")
         self.env = environment_fn()
         self.run_predefined_actions = run_predefined_actions
@@ -47,10 +49,20 @@ class ArenaMP(object):
        
 
         if self.source == 'openai':
-            api_key = args.api_key # your openai api key
-            organization=args.organization # your openai organization
+            api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+            organization = args.organization or os.getenv("OPENAI_ORGANIZATION")
+            base_url = getattr(args, 'base_url', '') or os.getenv("OPENAI_BASE_URL")
 
-            client = OpenAI(api_key = api_key, organization=organization)
+            if not api_key:
+                raise ValueError("Missing OpenAI API key. Set --api_key or OPENAI_API_KEY.")
+
+            client_kwargs = {"api_key": api_key}
+            if organization:
+                client_kwargs["organization"] = organization
+            if base_url:
+                client_kwargs["base_url"] = base_url.rstrip('/')
+
+            client = OpenAI(**client_kwargs)
             if self.chat:
                 self.sampling_params = {
                     "max_tokens": args.max_tokens,
@@ -81,6 +93,10 @@ class ArenaMP(object):
                                 usage = response.usage.prompt_tokens * 0.01 / 1000 + response.usage.completion_tokens * 0.03 / 1000
                             elif 'gpt-3.5-turbo-1106' in self.lm_id:
                                 usage = response.usage.prompt_tokens * 0.0015 / 1000 + response.usage.completion_tokens * 0.002 / 1000
+                            elif 'gpt-4o-2024-11-20' in self.lm_id:
+                                usage = response.usage.prompt_tokens * 0.005 / 1000 + response.usage.completion_tokens * 0.015 / 1000
+                            else:
+                                usage = 0
                         # mean_log_probs = [np.mean(response['choices'][i]['logprobs']['token_logprobs']) for i in
                         # 				  range(sampling_params['n'])]
                         else:
@@ -91,7 +107,12 @@ class ArenaMP(object):
 
                 else:
                     raise ValueError("invalid source")
-                return generated_samples, usage 
+                # Return token counts for JSON logging
+                if 'response' in locals() and hasattr(response, 'usage'):
+                    prompt_tokens = response.usage.prompt_tokens
+                    completion_tokens = response.usage.completion_tokens
+                    return generated_samples, usage, prompt_tokens, completion_tokens
+                return generated_samples, usage, 0, 0
             
             return _generate
 
@@ -179,6 +200,14 @@ class ArenaMP(object):
             pass
 
         obs = self.env.get_observations()
+        if self.logger:
+            self.logger.start_step(self.env.steps, {
+                "task_id": self.env.task_id,
+                "env_id": self.env.env_id,
+                "task_name": self.env.task_name,
+                "goal_instruction": self.env.goal_instruction,
+                "dialogue_history": self.dialogue_history,
+            })
         id_name_dict = self.env.id_name_dict
 
         obs2text = ''
@@ -201,9 +230,25 @@ class ArenaMP(object):
         print(self.env.goal_instruction)
               
         chat_prompt = [{"role": "user", "content": oracle_prompt}]
-        outputs, usage = self.generator(chat_prompt, self.sampling_params)
+        result = self.generator(chat_prompt, self.sampling_params)
+        if len(result) == 4:
+            outputs, usage, prompt_tokens, completion_tokens = result
+        else:
+            outputs, usage = result[:2]
+            prompt_tokens, completion_tokens = 0, 0
         self.total_cost += usage
         message = outputs[0]
+        if self.logger:
+            self.logger.log_llm_call(
+                agent="oracle",
+                call_type="oracle_reasoning",
+                prompt=oracle_prompt,
+                response=message,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost=usage,
+                execution_result="success",
+            )
 
         self.write_log_to_file(f"@@@@@@@@@@@@@@@@@@@@@@@ Task_ID: {self.env.task_id} @@@@@@@@@@@")
         self.write_log_to_file(f"$$$$$$$$$$$$$$$$$$$$$$$ Step:{self.env.steps} $$$$$$$$$$$$$$$$$$$$$$$")
@@ -216,10 +261,26 @@ class ArenaMP(object):
         self.total_dialogue_history.append( "Oracle: " + message)
         extract_prompt = message + '\n' + 'Extract from the above paragraph the content of the format "Hello <class name>(id): message.". Then output the contents of this section. Be careful not to output any superfluous content, exactly in the format given. If the above paragraph is not exactly formatted as "Hello <class name>(id): #message#.", output similar content in this format. As an example, the output might read: "Hello <robot dog>(0): please movetowards the <door>(1), and then open the <door>(1)". If this format does not appear in the preceding text, please summarize the above content into this format for output. To emphasize once again, the names of all objects and agent robots must be enclosed in <>, and the (id) must not be omitted. Class name missing <> and (id) should be completed with these elements. Please strictly follow this format in the output content.' 
         chat_prompt = [{"role": "user", "content": extract_prompt}]
-        outputs, usage = self.generator(chat_prompt , self.sampling_params)
+        result = self.generator(chat_prompt, self.sampling_params)
+        if len(result) == 4:
+            outputs, usage, prompt_tokens, completion_tokens = result
+        else:
+            outputs, usage = result[:2]
+            prompt_tokens, completion_tokens = 0, 0
         self.total_cost += usage
         message = outputs[0]
         self.subgoal = message
+        if self.logger:
+            self.logger.log_llm_call(
+                agent="oracle",
+                call_type="subgoal_extraction",
+                prompt=extract_prompt,
+                response=message,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost=usage,
+                execution_result="success",
+            )
 
         self.write_log_to_file("Oracle: " + message)
         
@@ -293,11 +354,20 @@ class ArenaMP(object):
             self.env.steps += 1
         else:
             try:
+                before_obs = obs
                 done, task_results,satisfied, unsatisfied,steps= self.env.step(class_name, real_id, agent_action, self.task_goal)
                 self.last_done = done
                 self.last_task_results = task_results
                 self.last_satisfied = satisfied
                 self.last_unsatisfied = unsatisfied
+                if self.logger:
+                    after_obs = self.env.get_observations()
+                    self.logger.log_environment_change(
+                        before_state={"obs2text": self.agent_obs2text(before_obs, id[0]), "step": self.env.steps},
+                        after_state={"obs2text": self.agent_obs2text(after_obs, id[0]), "step": self.env.steps},
+                        action_executed=agent_action,
+                        action_success=done,
+                    )
                 
             except Exception as e:
                 print("Exception occurs when performing action: ", agent_action)
@@ -333,6 +403,21 @@ class ArenaMP(object):
                     })
            
             success = done
+
+            # Optional low-cost trace stop for quick validation.
+            if self.args.max_steps is not None and self.env.steps >= self.args.max_steps:
+                print("---------------------------")
+                print(f"Early stop triggered by --max_steps={self.args.max_steps}")
+                print(f"steps: {steps}")
+                print("---------------------------")
+                self.write_log_to_file(
+                    f"""---------------------------
+                                       Early stop triggered by --max_steps={self.args.max_steps}
+                                       steps: {steps}
+                                       ---------------------------
+                                       """
+                )
+                break
       
             max_setp = 2 * self.env.ground_truth_step_num
             if self.env.steps > max_setp:

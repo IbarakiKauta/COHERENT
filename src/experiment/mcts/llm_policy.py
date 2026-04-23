@@ -1,6 +1,6 @@
 from openai import OpenAI, OpenAIError
 
-client = OpenAI(api_key="", organization="")
+client = None
 import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
@@ -27,12 +27,14 @@ def completions_with_backoff(**kwargs):
     return client.chat.completions.create(**kwargs)
 
 class LLMPolicy:
-    def __init__(self, args, device, model='gpt-4o-mini', source='openai', chat=True):
+    def __init__(self, args, device, model='gpt-4o-2024-11-20', source='openai', chat=True):
         self.device = device
         self.model = model
         self.gpt_use_num = 0
         self.total_gpt_cost = 0
-        self.lm_id = 'gpt-4o-mini'
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
+        self.lm_id = 'gpt-4o-2024-11-20'
         '''
         self.sampling_params = \
             {
@@ -58,10 +60,21 @@ Do not generate repeated or looped actions. You must interact with objects that 
         self.chat = chat
         if self.source == 'openai':
 
-            api_key = args.api_key # your openai api key
-            organization= args.organization # your openai organization
+            api_key = args.api_key or os.getenv("OPENAI_API_KEY")
+            organization = args.organization or os.getenv("OPENAI_ORGANIZATION")
+            base_url = getattr(args, 'base_url', '') or os.getenv("OPENAI_BASE_URL")
 
-            client = OpenAI(api_key = api_key, organization=organization)
+            if not api_key:
+                raise ValueError("Missing OpenAI API key. Set --api_key or OPENAI_API_KEY.")
+
+            client_kwargs = {"api_key": api_key}
+            if organization:
+                client_kwargs["organization"] = organization
+            if base_url:
+                client_kwargs["base_url"] = base_url.rstrip('/')
+
+            global client
+            client = OpenAI(**client_kwargs)
             if self.chat:
                 self.sampling_params = {
                     "max_tokens": 64,
@@ -348,6 +361,12 @@ Do not generate repeated or looped actions. You must interact with objects that 
                 "content": prompt + task,
             }],
             **self.sampling_params)
+            if hasattr(response, "usage"):
+                self.last_prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
+                self.last_completion_tokens = getattr(response.usage, "completion_tokens", 0)
+                self.total_gpt_cost += (
+                    self.last_prompt_tokens * 0.005 / 1000 + self.last_completion_tokens * 0.015 / 1000
+                )
             generated_samples = [response.choices[i].message.content.split(", ") \
                 for i in range(self.sampling_params['n'])]
             self.prompt_buffer[prompt + task] = generated_samples
