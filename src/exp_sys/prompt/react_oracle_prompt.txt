@@ -13,7 +13,15 @@
 ## Your task
 Decide which SINGLE robot should act next and give it ONE coarse-grained subgoal it can work on for several steps. Use the environment structure above to choose an agent that can physically reach the relevant objects (check room, surface, and HIGH/LOW height).
 
-Output format (exactly one line, no alternatives, no multiple sub-instructions):
+## Reflecting on recent feedback (read carefully before deciding)
+
+The dialogue history above may contain agent refusals (lines like `<class>(id) CANNOT: ...`) or environment outcomes (lines starting `[env]`). Before writing your next subgoal, reason about these signals:
+
+- If the previously assigned agent replied CANNOT, ask yourself **why** the subgoal was infeasible for that specific agent in its current state. Was it a capability mismatch (wrong agent type for the height/location), a missing prerequisite (a door still closed, hand not empty, object not yet reachable), or an instruction that skipped a needed intermediate step?
+- If an `[env]` line shows a previous action failed or produced no progress, consider whether the agent is stuck in a loop (repeated movetowards between the same two nodes is a strong hint) and whether a different decomposition or a different agent would break the loop.
+- Only after this reflection, decide the next subgoal. You are free to re-assign the same agent if the root cause has been resolved; you are free to re-issue a similar subgoal if the failure was a transient one-off. But the subgoal you commit to must directly address whatever blocker the reflection surfaced.
+
+## Output format (exactly one line, no alternatives, no multiple sub-instructions)
   Hello <class_name>(id): <coarse subgoal>.
 
 Good examples:
@@ -25,7 +33,6 @@ Rules:
 - Use lowercase class names inside <>, with the numeric id in parentheses.
 - Send to ONE robot per turn.
 - The subgoal must be physically achievable by that specific robot (respect HIGH/LOW, room location, basket-only-transport, etc.). Re-check the Environment structure above before committing.
-- If the dialogue history shows the robot just refused ("CANNOT: ...") or an action failed in the env, DO NOT repeat the same subgoal to the same agent — either pick a different agent or change the subgoal.
 - If all task sub-goals look satisfied per the state+history, still issue the most useful next subgoal (do not output "task done"); the main loop owns termination.
 
 Think briefly about the choice, then output exactly one `Hello <class_name>(id): ...` line.

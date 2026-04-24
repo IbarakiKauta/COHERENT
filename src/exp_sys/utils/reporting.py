@@ -242,6 +242,37 @@ body {
 .si-feedback.cannot { color: #b91c1c; }
 .si-feedback.warn   { color: #b45309; }
 
+/* ─── Suite aggregate bar (multi-task combined reports only) ─── */
+.suite-bar {
+  flex-shrink: 0; display: none;           /* shown only when multi-task */
+  background: #1e293b; color: #e2e8f0;
+  padding: 6px 16px; gap: 0;
+  overflow-x: auto; align-items: stretch;
+}
+.suite-bar.multi { display: flex; }
+.suite-group {
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 4px 16px; flex-shrink: 0;
+  border-right: 1px solid #334155;
+}
+.suite-group:last-child { border-right: none; }
+.suite-label { font-size: 9px; font-weight: 700; text-transform: uppercase;
+               letter-spacing: 0.6px; color: #94a3b8; margin-bottom: 2px; }
+.suite-value { font-size: 18px; font-weight: 800; line-height: 1; }
+.suite-value.ok  { color: #4ade80; }
+.suite-value.bad { color: #f87171; }
+.suite-value.neu { color: #e2e8f0; }
+.suite-sub   { font-size: 10px; color: #64748b; margin-top: 2px; }
+/* Success rate big badge (leftmost) */
+.suite-rate {
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 4px 20px 4px 16px; flex-shrink: 0;
+  border-right: 1px solid #334155;
+  min-width: 110px;
+}
+.suite-rate-pct  { font-size: 28px; font-weight: 900; line-height: 1; }
+.suite-rate-frac { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+
 @media (max-width: 900px) {
   .task-sidebar { width: 160px; }
   .step-list    { width: 200px; }
@@ -257,6 +288,9 @@ body {
   </div>
   <div id="hdrBadge" class="hdr-badge"></div>
 </header>
+
+<!-- Suite aggregate bar — populated by initSuitebar(), hidden for single-task -->
+<div class="suite-bar" id="suiteBar"></div>
 
 <div class="metrics" id="metrics"></div>
 
@@ -499,6 +533,81 @@ let curTaskIdx   = 0;
 let curTaskModel = '';  /* set in loadTask; used by computeCost */
 
 /* ── Sidebar ── */
+/* ── Suite aggregate bar (combined reports, ALL_TASKS.length > 1) ── */
+function initSuitebar() {
+  const bar = document.getElementById('suiteBar');
+  if (ALL_TASKS.length <= 1) return;
+  bar.classList.add('multi');
+
+  /* Aggregate across all tasks */
+  let totalTasks = ALL_TASKS.length;
+  let successCount = 0;
+  let totalSteps = 0, totalGtSteps = 0, gtCount = 0;
+  let totalCost = 0, totalIn = 0, totalOut = 0, totalReason = 0, totalLatMs = 0;
+  let totalCalls = 0;
+
+  ALL_TASKS.forEach(task => {
+    const m  = task.metadata || {};
+    const sm = task.summary  || {};
+    const steps = task.steps || [];
+    const model = m.lm_id || '';
+
+    if (sm.success) successCount++;
+    totalSteps += sm.total_steps || 0;
+    if (m.ground_truth_steps != null) {
+      totalGtSteps += Number(m.ground_truth_steps);
+      gtCount++;
+    }
+
+    /* Cost: recompute from pricing table when possible */
+    let taskCost = 0;
+    let taskCostKnown = !!model && !!MODEL_PRICING[model];
+    steps.forEach(s => (s.llm_calls || []).forEach(c => {
+      totalCalls++;
+      const t = c.tokens || {};
+      totalIn    += t.prompt     || 0;
+      totalOut   += t.completion || 0;
+      totalReason += t.reasoning || 0;
+      totalLatMs  += c.latency_ms || 0;
+      if (taskCostKnown) {
+        const cc = computeCost(model, t.prompt || 0, t.completion || 0);
+        if (cc != null) taskCost += cc;
+      }
+    }));
+    totalCost += taskCostKnown ? taskCost : (sm.total_cost || 0);
+  });
+
+  const successPct = totalTasks ? (successCount / totalTasks * 100) : 0;
+  const avgSteps   = totalTasks ? (totalSteps / totalTasks) : 0;
+  const avgGt      = gtCount    ? (totalGtSteps / gtCount)  : 0;
+  const stepRatio  = avgGt      ? (avgSteps / avgGt)        : null;
+  const pctCls     = successPct >= 60 ? 'ok' : (successPct >= 30 ? 'neu' : 'bad');
+
+  function grp(label, val, sub) {
+    return '<div class="suite-group">' +
+      '<div class="suite-label">' + esc(label) + '</div>' +
+      '<div class="suite-value neu">' + esc(val) + '</div>' +
+      (sub ? '<div class="suite-sub">' + esc(sub) + '</div>' : '') +
+      '</div>';
+  }
+
+  bar.innerHTML =
+    /* Big success-rate block on the left */
+    '<div class="suite-rate">' +
+      '<div class="suite-label">Success Rate</div>' +
+      '<div class="suite-rate-pct ' + pctCls + '">' + successPct.toFixed(0) + '%</div>' +
+      '<div class="suite-rate-frac">' + successCount + ' / ' + totalTasks + ' tasks</div>' +
+    '</div>' +
+    grp('Avg Steps',    avgSteps.toFixed(1),
+        avgGt ? 'gt avg ' + avgGt.toFixed(1) + (stepRatio ? ' (' + stepRatio.toFixed(2) + '×)' : '') : '') +
+    grp('Total Cost',   '$' + totalCost.toFixed(4)) +
+    grp('In Tokens',    totalIn.toLocaleString()) +
+    grp('Out Tokens',   totalOut.toLocaleString()) +
+    (totalReason > 0 ? grp('Reason Tokens', totalReason.toLocaleString()) : '') +
+    grp('Total Calls',  totalCalls.toLocaleString()) +
+    grp('Latency',      totalLatMs > 0 ? (totalLatMs / 1000).toFixed(0) + 's' : 'N/A');
+}
+
 function initSidebar() {
   const sidebar = document.getElementById('taskSidebar');
   if (ALL_TASKS.length <= 1) {
@@ -721,6 +830,7 @@ function loadStep(idx) {
 }
 
 initSidebar();
+initSuitebar();
 loadTask(0);
 </script>
 </body>

@@ -1,7 +1,7 @@
 ## Your current observation
 #OBSERVATION#
 
-## Available actions (your entire action space this turn)
+## Available actions (your entire action space this turn — your GROUND TRUTH)
 #ACTIONLIST#
 
 ## Oracle's subgoal for you
@@ -9,16 +9,18 @@
 
 ## How to respond
 
+The Available actions list above IS your ground truth for this turn. If an action appears in the list, it is feasible right now — do not second-guess its preconditions. If an action does NOT appear in the list, it is not feasible right now regardless of what you think should be possible.
+
 Reason internally, then output EXACTLY one of these two forms (no preamble, no markdown):
 
-If you CAN make progress this turn:
+If any listed action advances the oracle's subgoal:
   Action: <one action string copied VERBATIM from the Available actions list>
 
-If you CANNOT make progress (subgoal is impossible for you, or none of the listed actions advances it):
+If no listed action advances the oracle's subgoal (the subgoal is impossible for you, or none of the listed actions moves the task forward):
   CANNOT: <one short sentence stating the specific obstacle — e.g. "microwave(15) is on a HIGH surface I cannot reach", "wrong agent — this needs the robot_arm on that table">
 
 Hard rules:
 - The Action, if present, must match one of the listed actions character-for-character.
 - Do NOT output both Action and CANNOT. Pick one.
-- Do NOT invent actions not in the list; missing expected action is itself grounds for CANNOT.
+- Do NOT invent actions that are not in the list. If the action you want is missing, that itself is grounds for CANNOT — do not pretend it exists.
 - No explanatory text before or after the single `Action:` or `CANNOT:` line.

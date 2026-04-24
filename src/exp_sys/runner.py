@@ -25,6 +25,12 @@ _SRC = Path(__file__).resolve().parent.parent  # src/
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+# NOTE: the legacy `src/experiment/utils` path is no longer added to sys.path.
+# Importing `UnifiedLogger` from the top-level `logger` module previously
+# shadowed our `exp_sys.utils.unified_logger` version and silently dropped
+# newer kwargs like `reasoning_tokens`. The canonical source is now in
+# exp_sys.utils only.
+
 from exp_sys.env.coherent_env import CoherentEnv
 from exp_sys.agent.react_agent import ReactAgent
 from exp_sys.agent.crms_agent import CRMSAgent
@@ -36,7 +42,7 @@ from exp_sys.utils.llm_log import generate_llm_log
 from exp_sys.utils.unified_logger import UnifiedLogger
 
 _EXP_SYS = Path(__file__).resolve().parent
-_ENV_DIR = _EXP_SYS / "env" / "data"
+_ENV_DIR  = _SRC / "experiment" / "PEFA" / "env"
 
 _AGENT_CLASSES = {
     "react":           ReactAgent,
@@ -56,24 +62,27 @@ def _build_parser() -> argparse.ArgumentParser:
                    choices=["env0", "env1", "env2", "env3", "env4"])
     p.add_argument("--task", type=int, nargs="+", required=True,
                    help="Task indices, e.g. --task 2 or --task 2 4 9")
-    p.add_argument("--lm_id",        default="gpt-4o-2024-11-20")
+    p.add_argument("--lm_id",        default="gpt-5-mini")
     p.add_argument("--source",       default="openai")
     p.add_argument("--api_key",      default="")
     p.add_argument("--organization", default="")
     p.add_argument("--base_url",     default="")
-    p.add_argument("--max_tokens",   type=int,   default=512)
+    p.add_argument("--max_tokens",   type=int,   default=2048)
     p.add_argument("--t",            type=float, default=0.0)
     p.add_argument("--n",            type=int,   default=1)
-    p.add_argument("--reasoning_effort", default="low",
-                   choices=["minimal", "low", "medium", "high"],
-                   help="Only used by reasoning models (gpt-5*/o1*/o3*). "
-                        "'minimal' disables reasoning (and yields empty summaries); "
-                        "'low' (default) is cheapest tier that still populates "
-                        "reasoning.summary in the Responses API.")
     p.add_argument("--rounds",       type=int,   default=1,
                    help="Number of dialogue rounds per step (DRMS only)")
     p.add_argument("--max_steps",    type=int,   default=None,
                    help="Hard step limit (default: 2 × ground-truth steps)")
+    p.add_argument("--history_window", type=int, default=0,
+                   help="Rolling dialogue-history window (turns). "
+                        "0 or negative = keep full history (default). "
+                        "Set e.g. 20 to cap at the last 20 turns. (ReAct only)")
+    p.add_argument("--reasoning_effort", default="low",
+                   choices=["minimal", "low", "medium", "high"],
+                   help="Reasoning-model budget. 'minimal' disables reasoning; "
+                        "'low' (default) is cheapest that populates summaries. "
+                        "Only applies when lm_id is gpt-5*/o1*/o3*.")
     p.add_argument("--debug",        action="store_true")
     p.add_argument("--logs_root",    default=str(_EXP_SYS / "logs"))
     p.add_argument("--reports_root", default=str(_EXP_SYS / "reports"))

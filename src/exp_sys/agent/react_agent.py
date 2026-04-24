@@ -52,16 +52,17 @@ _AGENT_PROMPT_FILES_REASONING = {
 _AGENT_SYSTEM = {
     "quadrotor": (
         "You are quadrotor, an aerial robot with a transport basket.\n"
-        "Capabilities: fly between rooms (door must be open), takeoff, movetowards, land on LANDABLE surfaces. "
-        "You do NOT grab or place objects — you only transport them. "
-        "Always follow the sequence: takeoff → movetowards → land (never skip a step)."
+        "Capabilities: fly between rooms (door must be open), takeoff from a surface, "
+        "movetowards a target, land on LANDABLE surfaces. "
+        "You do NOT grab or place objects yourself — you transport them in your basket. "
+        "You must be close to a target before you can interact with it; use `movetowards` to approach."
     ),
     "robot_dog": (
         "You are robot_dog, a wheeled robot with a robotic arm.\n"
         "Capabilities: move between rooms (door must be open), grab/place objects on LOW_HEIGHT surfaces "
         "(hand must be empty), open/close doors and containers (hand must be empty). "
         "Cannot reach HIGH_HEIGHT surfaces or ON_HIGH_SURFACE objects. "
-        "Must movetowards an object before interacting with it."
+        "You must be close to a target before you can interact with it; use `movetowards` to approach."
     ),
     "robot arm": (
         "You are robot_arm, a fixed manipulator mounted on a table.\n"
@@ -100,6 +101,8 @@ class ReactAgent:
         self.logger = logger
         self._history_turns: List[str] = []
         self.dialogue_history: str = ""
+        # 0 or negative → keep full history; positive integer → rolling window.
+        self._history_window: int = int(getattr(args, "history_window", 0) or 0)
 
         api_key      = getattr(args, "api_key",      "") or os.getenv("OPENAI_API_KEY")      or ""
         organization = getattr(args, "organization", "") or os.getenv("OPENAI_ORGANIZATION") or ""
@@ -374,7 +377,9 @@ class ReactAgent:
     def _push_history(self, turn: str) -> None:
         self._history_turns.append(turn)
         numbered = [f"[{i + 1}] {t}" for i, t in enumerate(self._history_turns)]
-        self.dialogue_history = "\n".join(numbered[-10:])
+        if self._history_window and self._history_window > 0:
+            numbered = numbered[-self._history_window:]
+        self.dialogue_history = "\n".join(numbered)
 
     # ──────────────────────────────────────────────────────────────────
     # Main loop

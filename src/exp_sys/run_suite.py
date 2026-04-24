@@ -64,7 +64,8 @@ def _make_job(method: str, env: str, tasks: List[int], lm_id: str,
               rounds: int, max_steps: Optional[int],
               logs_root: Path, reports_root: Path,
               max_tokens: Optional[int] = None,
-              reasoning_effort: Optional[str] = None) -> Dict:
+              reasoning_effort: Optional[str] = None,
+              history_window: Optional[int] = None) -> Dict:
     return {
         "method":           method,
         "env":              env,
@@ -74,6 +75,7 @@ def _make_job(method: str, env: str, tasks: List[int], lm_id: str,
         "max_steps":        max_steps,
         "max_tokens":       max_tokens,
         "reasoning_effort": reasoning_effort,
+        "history_window":   history_window,
         "logs_root":        str(logs_root),
         "reports_root":     str(reports_root),
     }
@@ -99,6 +101,8 @@ def _build_cmd(job: Dict) -> List[str]:
         cmd += ["--max_tokens", str(job["max_tokens"])]
     if job.get("reasoning_effort"):
         cmd += ["--reasoning_effort", job["reasoning_effort"]]
+    if job.get("history_window") is not None:
+        cmd += ["--history_window", str(job["history_window"])]
     return cmd
 
 
@@ -194,13 +198,19 @@ def _scan_results(logs_root: Path, suite_start: datetime,
                     md = data.get("metadata", {})
                     summary = data.get("summary", {})
                     method = md.get("method", method_dir.name)
+                    # JSON logs store env_id as the bare numeric id (e.g. "0"),
+                    # but suite/CLI uses "env0" form. Normalize to suite form
+                    # so keys match the `expected` set built from job["env"].
                     env = str(md.get("env_id", env_dir.name))
+                    if env.isdigit():
+                        env = f"env{env}"
                     task_id = int(md.get("task_id", task_dir.name.removeprefix("task_")))
                     key = (method, env, task_id)
                     if key not in newest or mtime > newest[key][0]:
                         newest[key] = (mtime, {
                             "method":          method,
-                            "env":             env,
+                            "env":             env,  # normalized above to "envN" form
+
                             "task_id":         task_id,
                             "success":         bool(summary.get("success", False)),
                             "steps":           int(summary.get("total_steps", 0)),
@@ -306,6 +316,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max_tokens", type=int, default=None,
                    help="Per-LLM-call output token cap (runner default 512; "
                         "reasoning models auto-raise to 4096 if lower).")
+    p.add_argument("--history_window", type=int, default=None,
+                   help="Rolling dialogue-history window for ReAct. "
+                        "0 or negative = keep full history. Default: unset "
+                        "(runner applies its own default = 0 = full).")
     p.add_argument("--reasoning_effort", default=None,
                    choices=["minimal", "low", "medium", "high"],
                    help="Reasoning-model budget ('minimal' = closest to off). "
@@ -340,7 +354,8 @@ def main() -> int:
                                   args.rounds, args.max_steps,
                                   logs_root, reports_root,
                                   max_tokens=args.max_tokens,
-                                  reasoning_effort=args.reasoning_effort))
+                                  reasoning_effort=args.reasoning_effort,
+                                  history_window=args.history_window))
 
     suite_start = datetime.now()
     total_units = sum(len(j["tasks"]) for j in jobs)
